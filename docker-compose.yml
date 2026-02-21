@@ -1,0 +1,9 @@
+services:
+  notifier:
+    build: .
+    container_name: illa-notifier
+    volumes:
+      - ./movies.db:/app/movies.db
+    env_file:
+      - .env
+    restart: unless-stopped

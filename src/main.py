@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import html
+import time
 from database import Database
 from notifier import Notifier
 
@@ -58,4 +59,12 @@ def main():
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print(f"Critical error in loop: {e}")
+        
+        # 3600 seconds = 1 hour
+        print("Waiting 1 hour for the next check...")
+        time.sleep(3600)
