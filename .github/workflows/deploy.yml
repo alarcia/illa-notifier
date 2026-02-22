@@ -12,6 +12,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy .env file
+        run: cp /home/deployer/config/.env ./.env
+
       - name: Build and Run Docker
         run: |
           docker compose up -d --build
