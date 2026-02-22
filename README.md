@@ -2,7 +2,10 @@
 
 A lightweight notification system that monitors Illa Carlemany cinema releases to dispatch automated email and Telegram alerts.
 
-> 🔔 **Coming Soon**: Links to subscribe to the live Telegram bot and email notifications will be available here once the service is fully configured and deployed.
+## 📢 **Join the channel**
+All alerts are automatically published to the Telegram channel: [@cartelera_illa](https://t.me/cartelera_illa)
+
+> 🤖 **Bot in Development**: A customizable Telegram bot is currently under development to allow personalized movie alerts!
 
 ## 🎯 Purpose
 
