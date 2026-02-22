@@ -7,24 +7,11 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.PORT }}
-          script: |
-            cd ~/illa-notifier
-            if [ ! -d ".git" ]; then
-              git init
-              git remote add origin https://github.com/alarcia/illa-notifier.git
-            fi
-            git fetch origin main
-            git reset --hard origin/main
-            docker compose up -d --build
+      - name: Build and Run Docker
+        run: |
+          docker compose up -d --build
