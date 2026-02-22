@@ -15,6 +15,9 @@ jobs:
       - name: Copy .env file
         run: cp /home/deployer/config/.env ./.env
 
+      - name: Initialize empty database file
+        run: touch movies.db
+
       - name: Build and Run Docker
         run: |
           docker compose up -d --build
