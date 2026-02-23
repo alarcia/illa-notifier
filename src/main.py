@@ -1,8 +1,10 @@
+import html
+import json
+import time
+from urllib.parse import quote
+
 import requests
 from bs4 import BeautifulSoup
-import json
-import html
-import time
 from database import Database
 from notifier import Notifier
 
@@ -38,15 +40,27 @@ def main():
             title = str(movie.get('Titulo', 'Unknown')).strip()
             genre = movie.get('NombreGenero', 'Unknown')
             format_type = movie.get('NombreFormato', 'Unknown')
-            
+            cinema_id = movie.get('ID_Centro', '')
+            cinema_name = movie.get('CinemaName', '')
+
             poster_filename = movie.get('Cartel', '')
             full_poster_url = f"{base_poster_url}{poster_filename}" if poster_filename else None
+
+            # Build ticket purchase URL
+            # Pattern: /FilmTheaterPage/{id}/{title_encoded}/{cinema_id}/{cinema_name_encoded}
+            ticket_url = (
+                f"https://cinemesilla.com/FilmTheaterPage"
+                f"/{movie_id}"
+                f"/{quote(title)}"
+                f"/{cinema_id}"
+                f"/{quote(cinema_name)}"
+            )
 
             # Check if it's new BEFORE updating the DB
             if db.is_new_movie(movie_id):
                 print(f"[*] NEW MOVIE DETECTED: {title}")
                 # Send Telegram Notification
-                notifier.send_movie_alert(title, genre, format_type, full_poster_url)
+                notifier.send_movie_alert(title, genre, format_type, full_poster_url, ticket_url)
                 new_movies_count += 1
             
             # Update or add to DB
