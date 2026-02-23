@@ -12,8 +12,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Copy .env file
-        run: cp /home/deployer/illa-notifier/.env ./.env
+      - name: Create .env file
+        run: |
+          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" > .env
+          echo "TELEGRAM_CHAT=${{ vars.TELEGRAM_CHAT }}" >> .env
 
       - name: Initialize empty database file
         run: touch movies.db
