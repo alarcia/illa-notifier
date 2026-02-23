@@ -15,7 +15,7 @@ jobs:
       - name: Create .env file
         run: |
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" > .env
-          echo "TELEGRAM_CHAT_ID=${{ vars.TELEGRAM_CHAT }}" >> .env
+          echo "TELEGRAM_CHAT_ID=${{ vars.TELEGRAM_CHAT_ID }}" >> .env
 
       - name: Initialize empty database file
         run: touch movies.db
