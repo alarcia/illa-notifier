@@ -1,12 +1,20 @@
 import html
 import json
+import logging
+import threading
 import time
 from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
+from bot import run_bot
 from database import Database
 from notifier import Notifier
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 
 def main():
     db = Database()
@@ -73,12 +81,17 @@ def main():
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
+    # Start the bot listener (handles /start and future commands) in a
+    # background daemon thread so it doesn't block the scraping loop.
+    bot_thread = threading.Thread(target=run_bot, name="telegram-bot", daemon=True)
+    bot_thread.start()
+
     while True:
         try:
             main()
         except Exception as e:
             print(f"Critical error in loop: {e}")
-        
+
         # 3600 seconds = 1 hour
         print("Waiting 1 hour for the next check...")
         time.sleep(3600)
