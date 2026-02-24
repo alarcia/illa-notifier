@@ -3,7 +3,7 @@ services:
     build: .
     container_name: illa-notifier
     volumes:
-      - ${HOST_DB_PATH:-.}/movies.db:/app/movies.db
+      - ${HOST_DB_PATH:-.}/notifier.db:/app/notifier.db
     env_file:
       - .env
     restart: unless-stopped

@@ -208,3 +208,9 @@ __marimo__/
 
 # Database
 *.db
+
+# Skills
+.agent/
+.agents/
+skills-lock.json
+.trae

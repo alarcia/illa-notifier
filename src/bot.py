@@ -12,9 +12,12 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from database import Database, TelegramUser
+
 load_dotenv()
 
 logger = logging.getLogger("illa_notifier.bot")
+db = Database()
 
 
 @dataclass(frozen=True)
@@ -30,11 +33,20 @@ class BotConfig:
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /start command: send a personalised welcome message."""
+    """Handle the /start command: register the user and send a personalised welcome message."""
     if update.effective_user is None or update.message is None:
         return
 
-    first_name = update.effective_user.first_name
+    tg_user = update.effective_user
+    user = TelegramUser(
+        telegram_id=tg_user.id,
+        first_name=tg_user.first_name,
+        username=tg_user.username,
+    )
+    db.upsert_user(user)
+    logger.info("Upserted user id=%s (%s)", user.telegram_id, user.first_name)
+
+    first_name = tg_user.first_name
 
     text = (
         f"👋 Hola, {first_name}!\n\n"
