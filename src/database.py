@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from dataclasses import dataclass
 
@@ -9,7 +10,7 @@ class TelegramUser:
 
 
 class Database:
-    def __init__(self, db_path: str = "notifier.db") -> None:
+    def __init__(self, db_path: str = os.environ.get("DB_PATH", "notifier.db")) -> None:
         self.db_path = db_path
         self._create_tables()
 

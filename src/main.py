@@ -74,7 +74,6 @@ def main():
             # Update or add to DB
             db.update_or_add_movie(movie_id, title, genre, format_type, full_poster_url)
 
-        db.delete_inactive_movies()
         print(f"\nProcessing finished. {new_movies_count} notifications sent.")
             
     except Exception as e:
