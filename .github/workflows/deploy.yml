@@ -19,7 +19,9 @@ jobs:
           echo "HOST_DB_PATH=${{ vars.HOST_DB_PATH}}" >> .env
 
       - name: Initialize empty database file
-        run: touch notifier.db
+        run: |
+          mkdir -p ${{ vars.HOST_DB_PATH }}
+          touch ${{ vars.HOST_DB_PATH }}/notifier.db
 
       - name: Build and Run Docker
         run: |
