@@ -18,10 +18,8 @@ jobs:
           echo "TELEGRAM_CHAT_ID=${{ vars.TELEGRAM_CHAT_ID }}" >> .env
           echo "HOST_DB_PATH=${{ vars.HOST_DB_PATH}}" >> .env
 
-      - name: Initialize empty database file
-        run: |
-          mkdir -p ${{ vars.HOST_DB_PATH }}
-          touch ${{ vars.HOST_DB_PATH }}/notifier.db
+      - name: Initialize data directory
+        run: mkdir -p ${{ vars.HOST_DB_PATH }}
 
       - name: Build and Run Docker
         run: |

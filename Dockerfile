@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # Avoid generation of .pyc files and force standard output without buffer to see logs in real time
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV DB_PATH=/app/data/notifier.db
 
 # Set working directory
 WORKDIR /app
