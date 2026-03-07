@@ -68,14 +68,24 @@ def main():
             # Check if it's new BEFORE updating the DB
             if db.is_new_movie(movie_id):
                 print(f"[*] NEW MOVIE DETECTED: {title}")
-                # Send Telegram Notification
+                # Send global notification to the channel
                 notifier.send_movie_alert(title, genre, format_type, full_poster_url, ticket_url)
                 new_movies_count += 1
+
+                # Send personal DMs to matching subscribers
+                subscribers = db.get_matching_subscribers(movie_id, format_type, genre)
+                for tg_id in subscribers:
+                    success = notifier.send_dm(tg_id, title, genre, format_type, full_poster_url, ticket_url)
+                    if success:
+                        db.log_notification(tg_id, movie_id)
+                        print(f"    -> DM sent to subscriber {tg_id}")
+                    else:
+                        print(f"    -> DM failed for subscriber {tg_id}")
             
             # Update or add to DB
             db.update_or_add_movie(movie_id, title, genre, format_type, full_poster_url)
 
-        print(f"\nProcessing finished. {new_movies_count} notifications sent.")
+        print(f"\nProcessing finished. {new_movies_count} channel notifications sent.")
             
     except Exception as e:
         print(f"An error occurred: {e}")

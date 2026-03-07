@@ -106,3 +106,79 @@ class Database:
                 "first_name":  user.first_name,
                 "username":    user.username,
             })
+
+    def get_user_filters(self, telegram_id: int) -> set[tuple[str, str]]:
+        """Return the active subscription filters for a user as a set of (filter_type, filter_value) tuples."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT filter_type, filter_value FROM subscription_filters WHERE telegram_id = ?",
+                (telegram_id,),
+            ).fetchall()
+            return {(row[0], row[1]) for row in rows}
+
+    def toggle_filter(self, telegram_id: int, filter_type: str, filter_value: str) -> bool:
+        """Toggle a subscription filter. Returns True if the filter is now active, False if removed."""
+        with self._get_connection() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM subscription_filters WHERE telegram_id = ? AND filter_type = ? AND filter_value = ?",
+                (telegram_id, filter_type, filter_value),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "DELETE FROM subscription_filters WHERE telegram_id = ? AND filter_type = ? AND filter_value = ?",
+                    (telegram_id, filter_type, filter_value),
+                )
+                return False
+
+            conn.execute(
+                "INSERT INTO subscription_filters (telegram_id, filter_type, filter_value) VALUES (?, ?, ?)",
+                (telegram_id, filter_type, filter_value),
+            )
+            return True
+
+    def set_all_filters(self, telegram_id: int, filter_type: str, values: list[str]) -> None:
+        """Activate all given filter values for a filter type (idempotent)."""
+        with self._get_connection() as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO subscription_filters (telegram_id, filter_type, filter_value) VALUES (?, ?, ?)",
+                [(telegram_id, filter_type, v) for v in values],
+            )
+
+    def remove_all_filters(self, telegram_id: int, filter_type: str) -> None:
+        """Remove all filter values for a given filter type."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM subscription_filters WHERE telegram_id = ? AND filter_type = ?",
+                (telegram_id, filter_type),
+            )
+
+    def get_matching_subscribers(self, movie_id: int, format_type: str, genre: str) -> list[int]:
+        """Return telegram_ids of users whose filters match the given movie attributes.
+
+        A user matches if they have at least one filter that matches either the
+        movie's format_type OR genre.  Users who have already been notified about
+        this movie (present in notification_log) are excluded.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT DISTINCT sf.telegram_id
+                FROM subscription_filters sf
+                WHERE (
+                    (sf.filter_type = 'format_type' AND sf.filter_value = ?)
+                    OR
+                    (sf.filter_type = 'genre' AND sf.filter_value = ?)
+                )
+                AND sf.telegram_id NOT IN (
+                    SELECT nl.telegram_id FROM notification_log nl WHERE nl.movie_id = ?
+                )
+            """, (format_type, genre, movie_id)).fetchall()
+            return [row[0] for row in rows]
+
+    def log_notification(self, telegram_id: int, movie_id: int) -> None:
+        """Record that a personal notification was sent (idempotency guard)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO notification_log (telegram_id, movie_id) VALUES (?, ?)",
+                (telegram_id, movie_id),
+            )
