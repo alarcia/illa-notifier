@@ -214,3 +214,6 @@ __marimo__/
 .agents/
 skills-lock.json
 .trae
+illa-notifier.txt
+debug.html
+debug-new.html

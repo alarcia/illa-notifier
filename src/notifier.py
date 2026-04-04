@@ -1,5 +1,6 @@
-import os
 import json
+import logging
+import os
 from typing import Optional
 
 import requests
@@ -13,6 +14,7 @@ class Notifier:
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.api_url = f"https://api.telegram.org/bot{self.token}/"
+        self._logger = logging.getLogger("illa_notifier.notifier")
 
     def send_movie_alert(
         self,
@@ -62,7 +64,7 @@ class Notifier:
             response.raise_for_status()
             return True
         except Exception as e:
-            print(f"Error sending Telegram notification: {e}")
+            self._logger.error("Error sending Telegram notification: %s", e)
             return False
 
     def send_dm(
@@ -114,5 +116,5 @@ class Notifier:
             response.raise_for_status()
             return True
         except Exception as e:
-            print(f"Error sending DM to {telegram_id}: {e}")
+            self._logger.error("Error sending DM to %s: %s", telegram_id, e)
             return False
