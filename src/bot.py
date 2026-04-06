@@ -63,7 +63,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
     start_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔔 Configurar mis alertas", callback_data="open_alertas")],
+        [InlineKeyboardButton("🔔 Configurar mis alertas", callback_data="open_alerts")],
     ])
 
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=start_keyboard)
@@ -115,8 +115,8 @@ ALERTS_TEXT = (
 )
 
 
-async def alertas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /alertas command: show subscription inline keyboard."""
+async def alerts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /alerts command: show subscription inline keyboard."""
     if update.message is None or update.effective_user is None:
         return
 
@@ -127,11 +127,11 @@ async def alertas_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
-    logger.info("Sent /alertas keyboard to user id=%s", update.effective_user.id)
+    logger.info("Sent /alerts keyboard to user id=%s", update.effective_user.id)
 
 
-async def open_alertas_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the 'open_alertas' button from /start: replace the welcome message with the alerts keyboard."""
+async def open_alerts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the 'open_alerts' button from /start: replace the welcome message with the alerts keyboard."""
     query = update.callback_query
     if query is None or update.effective_user is None:
         return
@@ -144,7 +144,7 @@ async def open_alertas_callback(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
-    logger.info("Opened alertas keyboard for user id=%s", update.effective_user.id)
+    logger.info("Opened alerts keyboard for user id=%s", update.effective_user.id)
 
 
 async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -223,8 +223,8 @@ def build_application(config: BotConfig) -> Application:
     """Build and configure the Telegram Application with all registered handlers."""
     app = Application.builder().token(config.token).build()
     app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CommandHandler("alertas", alertas_handler))
-    app.add_handler(CallbackQueryHandler(open_alertas_callback, pattern="^open_alertas$"))
+    app.add_handler(CommandHandler("alerts", alerts_handler))
+    app.add_handler(CallbackQueryHandler(open_alerts_callback, pattern="^open_alerts$"))
     app.add_handler(CallbackQueryHandler(toggle_all_callback, pattern=r"^all:"))
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern=r"^sub:"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))

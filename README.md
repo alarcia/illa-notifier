@@ -1,37 +1,69 @@
 # Illa Notifier
 
-A lightweight notification system that monitors Illa Carlemany cinema releases to dispatch automated email and Telegram alerts.
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Telegram Bot](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-## 📢 **Join the channel**
-All alerts are automatically published to the Telegram channel: [@cartelera_illa](https://t.me/cartelera_illa)
+Scrapes the [Cinemes Illa Carlemany](https://cinemesilla.com/) website every hour, spots new movies, and sends Telegram alerts. There's a public channel for everything and a bot for people who only care about specific genres or languages.
 
-> 🤖 **Bot in Development**: A customizable Telegram bot is currently under development to allow personalized movie alerts!
+## 📢 The channel
 
-## 🎯 Purpose
+[@cartelera_illa](https://t.me/cartelera_illa) — every new movie shows up here automatically. Poster, title, genre, available languages, and a link to buy tickets. Notifications are in English.
 
-This project automates the tracking of new movie releases at the local cinema. With the help of this tool, the user can independently verify the currently available movies and receive notifications as soon as new titles are added to the billboard.
+## 🤖 The bot
 
-## ⚙️ How It Works
+[@illa_notifier_bot](https://t.me/illa_notifier_bot) — the channel is noisy if you don't care about half the movies. The bot lets you pick what you actually want to hear about:
 
-1. **Automated Web Scraping:** Uses `BeautifulSoup` to fetch the latest movie catalog directly from the [Cinemes Illa Carlemany](https://cinemesilla.com/) website. It extracts key information such as the movie title, genre, format, and poster URL.
-2. **State Management & Diffing:** Maintains a local SQLite database of currently active movies. Each time the script runs, it compares the scraped data against the database to detect **newly added** movies, while archiving those that are no longer showing.
-3. **Notification Dispatch (WIP):** Formats the newly detected releases and prepares them to be sent out via Telegram and Email using configured environment variables.
-4. **Containerized Execution:** The entire process is completely isolated within a Docker container, designed to be run periodically (e.g., via cron) without polluting the host environment's Python dependencies.
+- 💬 **Language** — VOSE, Castellà, Català
+- 🎭 **Genre** — Thriller, Comedia, Drama, Terror, Animació, Aventura
 
-## 🛠️ Technology Stack
+Set your filters, and you'll get a DM only when something matches. No filters, no messages.
 
-- **Language:** Python 3.12+
-- **Scraping:** `requests`, `BeautifulSoup` (`beautifulsoup4`)
-- **Database:** SQLite (built-in)
-- **Deployment:** Docker
+> The bot currently speaks Spanish. English and Catalan localization is planned.
 
-## 📂 Project Structure
+### Commands
 
-- `src/main.py`: The entry point that orchestrates web scraping, data parsing, and database synchronisation.
-- `src/database.py`: Encapsulates database operations, providing a clean interface for querying and updating movie states.
-- `requirements.txt`: Lightweight list of external Python dependencies.
-- `Dockerfile`: Instructions ensuring a lightweight, reproducible runtime environment.
+| Command | What it does |
+|---------|-------------|
+| `/start` | Registers you and shows a welcome message with a quick link to set up alerts |
+| `/alerts` | Opens a keyboard with toggle buttons for each language and genre |
+
+The keyboard has header buttons (Language / Genre) that select or deselect an entire category at once. Each individual filter shows a ✅ when active.
+
+## ⚙️ How it works
+
+The scraper fetches the full movie catalog and session data from cinemesilla.com using `BeautifulSoup`. It parses a Vue component that holds all the movie and showtime info as JSON attributes — titles, genres, posters, formats, rooms, times.
+
+On each run it compares what it found against a SQLite database. New movie? Alert goes to the channel. Then it checks which bot users have filters matching that movie's genre or language and sends them a DM. A notification log prevents duplicate messages.
+
+The bot and the scraper run in the same process — the bot listens for commands in a background thread while the scraper loops every hour. The whole thing runs in a Docker container.
+
+## 🛠️ Tech
+
+- **Python 3.12** with `beautifulsoup4` + `requests` for scraping
+- **python-telegram-bot** for the bot and notifications
+- **SQLite** for state (movies, sessions, users, filters, notification log)
+- **Docker** for deployment
+
+## 📂 Project structure
+
+```
+src/
+├── main.py          # Entry point — scraping loop + bot thread
+├── bot.py           # /start, /alerts, inline keyboard callbacks
+├── notifier.py      # Sends alerts to the channel and DMs to subscribers
+├── database.py      # All SQLite operations
+└── test_notification.py
+```
+
+## ⚠️ Known limitations
+
+- Genre and language options are hardcoded. If the cinema adds a new format or genre category, the bot keyboard won't show it until the code is updated.
+- The scraper runs hourly. A movie could be up on the website for up to an hour before the alert goes out.
+- Only tested on macOS and Linux (Docker). No Windows testing.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
