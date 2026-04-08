@@ -72,7 +72,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ── Constantes para los filtros disponibles ──────────────────────────
 
-FORMAT_OPTIONS: list[str] = ["VOSE", "CASTELLÀ", "CATALÀ"]
+FORMAT_OPTIONS: list[str] = ["VOSE", "VO", "CASTELLÀ", "CATALÀ"]
 GENRE_OPTIONS: list[str] = ["Thriller", "Comedia", "Drama", "Terror", "Animació", "Aventura"]
 
 
