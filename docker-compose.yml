@@ -2,8 +2,11 @@ services:
   notifier:
     build: .
     container_name: illa-notifier
+    environment:
+      TZ: Europe/Madrid
     volumes:
       - ${HOST_DB_PATH:-./data}:/app/data
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     restart: unless-stopped
