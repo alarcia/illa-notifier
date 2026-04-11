@@ -439,6 +439,7 @@ def build_application(config: BotConfig) -> Application:
         fallbacks=[
             CommandHandler("cancel", email_cancel),
         ],
+        per_message=False,
     )
     app.add_handler(email_conv)
 
