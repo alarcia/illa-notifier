@@ -289,11 +289,11 @@ async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return WAITING_EMAIL
 
 
-async def open_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def open_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle 'open_email' button from /start."""
     query = update.callback_query
     if query is None or update.effective_user is None:
-        return ConversationHandler.END
+        return
     await query.answer()
 
     email, enabled = db.get_user_email_status(update.effective_user.id)
@@ -305,13 +305,13 @@ async def open_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown",
             reply_markup=keyboard,
         )
-        return ConversationHandler.END
-
-    await query.edit_message_text(
-        _email_status_text(None, False),
-        parse_mode="MarkdownV2",
-    )
-    return WAITING_EMAIL
+    else:
+        await query.edit_message_text(
+            "📧 *Configuración de email*\n\n"
+            "Usa el comando /email para configurar tu dirección "
+            "y recibir alertas por correo\.",
+            parse_mode="MarkdownV2",
+        )
 
 
 async def email_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -425,11 +425,12 @@ def build_application(config: BotConfig) -> Application:
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern=r"^sub:"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))
 
-    # Email configuration conversation
+    # Email: standalone button handler + conversation for /email command
+    app.add_handler(CallbackQueryHandler(open_email_callback, pattern="^open_email$"))
+
     email_conv = ConversationHandler(
         entry_points=[
             CommandHandler("email", email_command),
-            CallbackQueryHandler(open_email_callback, pattern="^open_email$"),
         ],
         states={
             WAITING_EMAIL: [
@@ -439,7 +440,6 @@ def build_application(config: BotConfig) -> Application:
         fallbacks=[
             CommandHandler("cancel", email_cancel),
         ],
-        per_message=False,
     )
     app.add_handler(email_conv)
 
