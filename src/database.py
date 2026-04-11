@@ -111,6 +111,40 @@ class Database:
                 conn.execute("ALTER TABLE movies DROP COLUMN format")
                 logger.info("Migration: dropped 'format' column from movies table")
 
+            # Migration: add email_notifications column to users
+            user_columns = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if "email_notifications" not in user_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN email_notifications INTEGER DEFAULT 0")
+                logger.info("Migration: added 'email_notifications' column to users table")
+
+            # Migration: add channel column to notification_log
+            nl_columns = [row[1] for row in conn.execute("PRAGMA table_info(notification_log)").fetchall()]
+            if "channel" not in nl_columns:
+                conn.executescript("""
+                    ALTER TABLE notification_log RENAME TO notification_log_old;
+
+                    CREATE TABLE notification_log (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        telegram_id INTEGER NOT NULL
+                                    REFERENCES users (telegram_id) ON DELETE CASCADE,
+                        movie_id    INTEGER NOT NULL
+                                    REFERENCES movies (id) ON DELETE CASCADE,
+                        channel     TEXT    NOT NULL DEFAULT 'telegram',
+                        sent_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (telegram_id, movie_id, channel)
+                    );
+
+                    INSERT INTO notification_log (id, telegram_id, movie_id, channel, sent_at)
+                    SELECT id, telegram_id, movie_id, 'telegram', sent_at
+                    FROM notification_log_old;
+
+                    DROP TABLE notification_log_old;
+
+                    CREATE INDEX IF NOT EXISTS idx_nl_movie
+                        ON notification_log (movie_id);
+                """)
+                logger.info("Migration: added 'channel' column to notification_log table")
+
     def reset_active_status(self) -> None:
         """Mark all movies and sessions as inactive before a fresh scrape."""
         with self._get_connection() as conn:
@@ -281,9 +315,83 @@ class Database:
             return [row[0] for row in rows]
 
     def log_notification(self, telegram_id: int, movie_id: int) -> None:
-        """Record that a personal notification was sent (idempotency guard)."""
+        """Record that a Telegram DM notification was sent (idempotency guard)."""
         with self._get_connection() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO notification_log (telegram_id, movie_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO notification_log (telegram_id, movie_id, channel) VALUES (?, ?, 'telegram')",
+                (telegram_id, movie_id),
+            )
+
+    # ── Email-related methods ────────────────────────────────────────────
+
+    def update_user_email(self, telegram_id: int, email: str, enabled: bool = True) -> None:
+        """Save the user's email and set the email_notifications flag."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE users
+                SET email = ?, email_notifications = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_id = ?
+            """, (email, int(enabled), telegram_id))
+
+    def get_user_email_status(self, telegram_id: int) -> tuple[str | None, bool]:
+        """Return (email, email_notifications_enabled) for a user."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT email, email_notifications FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            ).fetchone()
+            if row is None:
+                return None, False
+            return row[0], bool(row[1])
+
+    def disable_email_notifications(self, telegram_id: int) -> None:
+        """Disable email notifications for a user (keeps the email address)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE users SET email_notifications = 0, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+
+    def remove_user_email(self, telegram_id: int) -> None:
+        """Remove email and disable email notifications."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE users SET email = NULL, email_notifications = 0, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+
+    def get_email_subscribers(self, movie_id: int, formats: list[str], genre: str) -> list[tuple[int, str]]:
+        """Return (telegram_id, email) of users with email active, matching filters,
+        and not yet notified by email for this movie."""
+        if not formats:
+            return []
+
+        placeholders = ", ".join("?" for _ in formats)
+        params: list[str | int] = list(formats) + [genre, movie_id]
+
+        with self._get_connection() as conn:
+            rows = conn.execute(f"""
+                SELECT DISTINCT sf.telegram_id, u.email
+                FROM subscription_filters sf
+                JOIN users u ON u.telegram_id = sf.telegram_id
+                WHERE u.email IS NOT NULL
+                  AND u.email_notifications = 1
+                  AND (
+                      (sf.filter_type = 'format_type' AND sf.filter_value IN ({placeholders}))
+                      OR
+                      (sf.filter_type = 'genre' AND sf.filter_value = ?)
+                  )
+                  AND sf.telegram_id NOT IN (
+                      SELECT nl.telegram_id FROM notification_log nl
+                      WHERE nl.movie_id = ? AND nl.channel = 'email'
+                  )
+            """, params).fetchall()
+            return [(row[0], row[1]) for row in rows]
+
+    def log_email_notification(self, telegram_id: int, movie_id: int) -> None:
+        """Record that an email notification was sent (idempotency guard)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO notification_log (telegram_id, movie_id, channel) VALUES (?, ?, 'email')",
                 (telegram_id, movie_id),
             )

@@ -17,6 +17,8 @@ jobs:
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" > .env
           echo "TELEGRAM_CHAT_ID=${{ vars.TELEGRAM_CHAT_ID }}" >> .env
           echo "HOST_DB_PATH=${{ vars.HOST_DB_PATH}}" >> .env
+          echo "RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}" >> .env
+          echo "EMAIL_FROM=${{ vars.EMAIL_FROM }}" >> .env
 
       - name: Initialize data directory
         run: mkdir -p ${{ vars.HOST_DB_PATH }}

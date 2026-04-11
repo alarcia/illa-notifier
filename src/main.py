@@ -93,6 +93,18 @@ def main():
                         logger.info("DM sent to subscriber %s", tg_id)
                     else:
                         logger.warning("DM failed for subscriber %s", tg_id)
+
+                # Send email notifications to matching email subscribers
+                email_subscribers = db.get_email_subscribers(movie_id, formats, genre)
+                for tg_id, email_addr in email_subscribers:
+                    success = notifier.send_email_notification(
+                        email_addr, title, genre, format_display, full_poster_url, ticket_url,
+                    )
+                    if success:
+                        db.log_email_notification(tg_id, movie_id)
+                        logger.info("Email sent to %s (user %s)", email_addr, tg_id)
+                    else:
+                        logger.warning("Email failed for %s (user %s)", email_addr, tg_id)
             
             # Update or add movie to DB (without format — derived from sessions)
             db.update_or_add_movie(movie_id, title, genre, full_poster_url)

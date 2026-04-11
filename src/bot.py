@@ -6,11 +6,20 @@ Run alongside the scraping loop; handles direct user interactions.
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 from database import Database, TelegramUser
 
@@ -64,6 +73,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     start_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔔 Configurar mis alertas", callback_data="open_alerts")],
+        [InlineKeyboardButton("📧 Configurar email", callback_data="open_email")],
     ])
 
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=start_keyboard)
@@ -219,6 +229,192 @@ async def toggle_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("User id=%s toggled all %s -> %s", telegram_id, filter_type, "off" if all_active else "on")
 
 
+# ── Email configuration flow ─────────────────────────────────────────
+
+WAITING_EMAIL = 0  # ConversationHandler state
+
+_EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def _email_status_keyboard(has_email: bool, enabled: bool) -> InlineKeyboardMarkup:
+    """Build inline keyboard for email management."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    if has_email:
+        buttons.append([InlineKeyboardButton("✏️ Cambiar email", callback_data="email_change")])
+        if enabled:
+            buttons.append([InlineKeyboardButton("🔕 Desactivar emails", callback_data="email_disable")])
+        else:
+            buttons.append([InlineKeyboardButton("🔔 Activar emails", callback_data="email_enable")])
+        buttons.append([InlineKeyboardButton("🗑️ Eliminar email", callback_data="email_remove")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _email_status_text(email: str | None, enabled: bool) -> str:
+    """Build the status message for the user's email configuration."""
+    if email:
+        status = "✅ activas" if enabled else "🔕 desactivadas"
+        return (
+            f"📧 *Configuración de email*\n\n"
+            f"Tu email: `{email}`\n"
+            f"Notificaciones: {status}"
+        )
+    return (
+        "📧 *Configuración de email*\n\n"
+        "No tienes un email configurado\\.\n"
+        "Escríbeme tu email y te enviaré las alertas "
+        "de películas también por correo\\."
+    )
+
+
+async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the /email command: show email status or ask for email."""
+    if update.message is None or update.effective_user is None:
+        return ConversationHandler.END
+
+    email, enabled = db.get_user_email_status(update.effective_user.id)
+
+    if email:
+        keyboard = _email_status_keyboard(has_email=True, enabled=enabled)
+        await update.message.reply_text(
+            _email_status_text(email, enabled),
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        _email_status_text(None, False),
+        parse_mode="MarkdownV2",
+    )
+    return WAITING_EMAIL
+
+
+async def open_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle 'open_email' button from /start."""
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return ConversationHandler.END
+    await query.answer()
+
+    email, enabled = db.get_user_email_status(update.effective_user.id)
+
+    if email:
+        keyboard = _email_status_keyboard(has_email=True, enabled=enabled)
+        await query.edit_message_text(
+            _email_status_text(email, enabled),
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        _email_status_text(None, False),
+        parse_mode="MarkdownV2",
+    )
+    return WAITING_EMAIL
+
+
+async def email_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Validate and save the email the user typed."""
+    if update.message is None or update.effective_user is None:
+        return ConversationHandler.END
+
+    text = update.message.text.strip() if update.message.text else ""
+
+    if not _EMAIL_REGEX.match(text):
+        await update.message.reply_text(
+            "❌ Ese email no parece válido\\. Inténtalo otra vez o usa /cancel para salir\\.",
+            parse_mode="MarkdownV2",
+        )
+        return WAITING_EMAIL
+
+    db.update_user_email(update.effective_user.id, text, enabled=True)
+    logger.info("User id=%s set email to %s", update.effective_user.id, text)
+
+    await update.message.reply_text(
+        f"✅ Email configurado: `{text}`\n\n"
+        f"A partir de ahora recibirás las alertas de películas "
+        f"también por correo\\. Puedes gestionarlo con /email\\.",
+        parse_mode="MarkdownV2",
+    )
+    return ConversationHandler.END
+
+
+async def email_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel the email configuration flow."""
+    if update.message:
+        await update.message.reply_text("Cancelado. Tu configuración de email no ha cambiado.")
+    return ConversationHandler.END
+
+
+async def email_disable_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Disable email notifications (keep the address)."""
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer("Emails desactivados")
+
+    db.disable_email_notifications(update.effective_user.id)
+    email, enabled = db.get_user_email_status(update.effective_user.id)
+    keyboard = _email_status_keyboard(has_email=bool(email), enabled=enabled)
+    await query.edit_message_text(
+        _email_status_text(email, enabled),
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+    logger.info("User id=%s disabled email notifications", update.effective_user.id)
+
+
+async def email_enable_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Re-enable email notifications."""
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer("Emails activados")
+
+    email, _ = db.get_user_email_status(update.effective_user.id)
+    if email:
+        db.update_user_email(update.effective_user.id, email, enabled=True)
+    email, enabled = db.get_user_email_status(update.effective_user.id)
+    keyboard = _email_status_keyboard(has_email=bool(email), enabled=enabled)
+    await query.edit_message_text(
+        _email_status_text(email, enabled),
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+    logger.info("User id=%s enabled email notifications", update.effective_user.id)
+
+
+async def email_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove email completely."""
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer("Email eliminado")
+
+    db.remove_user_email(update.effective_user.id)
+    await query.edit_message_text(
+        "🗑️ Email eliminado\\. Ya no recibirás alertas por correo\\.\n\n"
+        "Puedes configurar uno nuevo con /email\\.",
+        parse_mode="MarkdownV2",
+    )
+    logger.info("User id=%s removed email", update.effective_user.id)
+
+
+async def email_change_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Prompt user to type a new email (standalone, outside ConversationHandler)."""
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+
+    await query.edit_message_text(
+        "✏️ Escríbeme tu nuevo email\\.\n"
+        "Usa /email para empezar el proceso\\.",
+        parse_mode="MarkdownV2",
+    )
+
+
 def build_application(config: BotConfig) -> Application:
     """Build and configure the Telegram Application with all registered handlers."""
     app = Application.builder().token(config.token).build()
@@ -228,6 +424,30 @@ def build_application(config: BotConfig) -> Application:
     app.add_handler(CallbackQueryHandler(toggle_all_callback, pattern=r"^all:"))
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern=r"^sub:"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern="^noop$"))
+
+    # Email configuration conversation
+    email_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("email", email_command),
+            CallbackQueryHandler(open_email_callback, pattern="^open_email$"),
+        ],
+        states={
+            WAITING_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, email_received),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", email_cancel),
+        ],
+    )
+    app.add_handler(email_conv)
+
+    # Email management callbacks (outside ConversationHandler)
+    app.add_handler(CallbackQueryHandler(email_disable_callback, pattern="^email_disable$"))
+    app.add_handler(CallbackQueryHandler(email_enable_callback, pattern="^email_enable$"))
+    app.add_handler(CallbackQueryHandler(email_remove_callback, pattern="^email_remove$"))
+    app.add_handler(CallbackQueryHandler(email_change_callback, pattern="^email_change$"))
+
     return app
 
 
