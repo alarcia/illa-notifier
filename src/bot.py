@@ -309,7 +309,7 @@ async def open_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "📧 *Configuración de email*\n\n"
             "Usa el comando /email para configurar tu dirección "
-            "y recibir alertas por correo\.",
+            "y recibir alertas por correo\\.",
             parse_mode="MarkdownV2",
         )
 
