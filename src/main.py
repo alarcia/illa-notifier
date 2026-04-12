@@ -9,7 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 from bot import run_bot
 from database import Database, Session
-from notifier import Notifier
+from notifier import MovieData, Notifier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +52,7 @@ def main():
 
         db.reset_active_status()
         new_movies_count = 0
+        new_movies: list[tuple[MovieData, list[str]]] = []  # (movie_data, formats)
 
         for movie in movies_list:
             movie_id = movie.get('ID_Espectaculo')
@@ -94,17 +95,16 @@ def main():
                     else:
                         logger.warning("DM failed for subscriber %s", tg_id)
 
-                # Send email notifications to matching email subscribers
-                email_subscribers = db.get_email_subscribers(movie_id, formats, genre)
-                for tg_id, email_addr in email_subscribers:
-                    success = notifier.send_email_notification(
-                        email_addr, title, genre, format_display, full_poster_url, ticket_url,
-                    )
-                    if success:
-                        db.log_email_notification(tg_id, movie_id)
-                        logger.info("Email sent to %s (user %s)", email_addr, tg_id)
-                    else:
-                        logger.warning("Email failed for %s (user %s)", email_addr, tg_id)
+                # Collect for batched email later
+                movie_data = MovieData(
+                    movie_id=movie_id,
+                    title=title,
+                    genre=genre,
+                    format_type=format_display,
+                    poster_url=full_poster_url,
+                    ticket_url=ticket_url,
+                )
+                new_movies.append((movie_data, formats))
             
             # Update or add movie to DB (without format — derived from sessions)
             db.update_or_add_movie(movie_id, title, genre, full_poster_url)
@@ -123,6 +123,25 @@ def main():
                     show_time=raw_session.get('Hora', ''),
                 )
                 db.upsert_session(session)
+
+        # ── Batched email notifications ──────────────────────────────
+        # Group all new movies by email subscriber, then send ONE email each.
+        if new_movies:
+            subscriber_movies: dict[tuple[int, str], list[MovieData]] = {}
+            for movie_data, formats in new_movies:
+                email_subs = db.get_email_subscribers(movie_data.movie_id, formats, movie_data.genre)
+                for tg_id, email_addr in email_subs:
+                    subscriber_movies.setdefault((tg_id, email_addr), []).append(movie_data)
+
+            for (tg_id, email_addr), movies_for_sub in subscriber_movies.items():
+                success = notifier.send_email_notification(email_addr, movies_for_sub)
+                if success:
+                    for m in movies_for_sub:
+                        db.log_email_notification(tg_id, m.movie_id)
+                    logger.info("Batched email (%d movies) sent to %s (user %s)",
+                                len(movies_for_sub), email_addr, tg_id)
+                else:
+                    logger.warning("Batched email failed for %s (user %s)", email_addr, tg_id)
 
         logger.info("Processing finished. %d channel notifications sent.", new_movies_count)
 

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 import requests
@@ -10,6 +11,18 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+
+@dataclass(frozen=True)
+class MovieData:
+    """Data needed to render a movie in an email notification."""
+    movie_id: int
+    title: str
+    genre: str
+    format_type: str
+    poster_url: str | None
+    ticket_url: str | None
+
 
 class Notifier:
     def __init__(self):
@@ -129,54 +142,74 @@ class Notifier:
             self._logger.error("Error sending DM to %s: %s", telegram_id, e)
             return False
 
-    def send_email_notification(
-        self,
-        to_email: str,
-        title: str,
-        genre: str,
-        format_type: str,
-        poster_url: str | None,
-        ticket_url: str | None,
-    ) -> bool:
-        """Send a movie alert email via Resend with retry + exponential backoff."""
+    # ── Email ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _render_movie_card(movie: MovieData) -> str:
+        """Render a single movie as an HTML card for the email body."""
+        poster = (
+            f'<img src="{movie.poster_url}" alt="{movie.title}" '
+            f'style="max-width:280px;border-radius:10px;margin-bottom:12px;" /><br>'
+            if movie.poster_url else ""
+        )
+        ticket = (
+            f'<a href="{movie.ticket_url}" style="display:inline-block;padding:10px 20px;'
+            f'background-color:#e50914;color:#ffffff;text-decoration:none;'
+            f'border-radius:8px;font-weight:bold;font-size:14px;">'
+            f'🎟️ Comprar entradas</a>'
+            if movie.ticket_url else ""
+        )
+        return f"""\
+<div style="background:#16213e;border-radius:12px;padding:16px;margin-bottom:16px;">
+  {poster}
+  <table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
+    <tr>
+      <td style="padding:4px 0;color:#999;width:90px;">🍿 Título</td>
+      <td style="padding:4px 0;font-weight:bold;">{movie.title}</td>
+    </tr>
+    <tr>
+      <td style="padding:4px 0;color:#999;">🎭 Género</td>
+      <td style="padding:4px 0;">{movie.genre}</td>
+    </tr>
+    <tr>
+      <td style="padding:4px 0;color:#999;">💬 Idioma</td>
+      <td style="padding:4px 0;">{movie.format_type}</td>
+    </tr>
+  </table>
+  {ticket}
+</div>"""
+
+    def send_email_notification(self, to_email: str, movies: list[MovieData]) -> bool:
+        """Send a single email with one or more movie alerts.
+
+        Returns True if the email was sent successfully.
+        """
         if not self._resend_api_key or not self._email_from:
             self._logger.warning("Email not configured — skipping email to %s", to_email)
             return False
 
-        poster_html = (
-            f'<img src="{poster_url}" alt="{title}" '
-            f'style="max-width:300px;border-radius:12px;margin-bottom:16px;" /><br>'
-            if poster_url else ""
-        )
+        if not movies:
+            return False
 
-        ticket_html = (
-            f'<a href="{ticket_url}" style="display:inline-block;padding:12px 24px;'
-            f'background-color:#e50914;color:#ffffff;text-decoration:none;'
-            f'border-radius:8px;font-weight:bold;margin-top:12px;">'
-            f'🎟️ Comprar entradas</a>'
-            if ticket_url else ""
+        # Subject adapts to single vs multiple movies
+        if len(movies) == 1:
+            subject = f"🎬 Nueva película: {movies[0].title}"
+        else:
+            subject = f"🎬 {len(movies)} nuevas películas en cartelera"
+
+        cards_html = "\n".join(self._render_movie_card(m) for m in movies)
+
+        heading = (
+            "🎬 Nueva película en cartelera"
+            if len(movies) == 1
+            else f"🎬 {len(movies)} nuevas películas en cartelera"
         )
 
         html_body = f"""\
 <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:480px;margin:0 auto;
             background:#1a1a2e;color:#eaeaea;padding:24px;border-radius:16px;">
-  <h2 style="color:#e50914;margin-top:0;">🎬 Nueva película en cartelera</h2>
-  {poster_html}
-  <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
-    <tr>
-      <td style="padding:6px 0;color:#999;">🍿 Título</td>
-      <td style="padding:6px 0;font-weight:bold;">{title}</td>
-    </tr>
-    <tr>
-      <td style="padding:6px 0;color:#999;">🎭 Género</td>
-      <td style="padding:6px 0;">{genre}</td>
-    </tr>
-    <tr>
-      <td style="padding:6px 0;color:#999;">💬 Idioma</td>
-      <td style="padding:6px 0;">{format_type}</td>
-    </tr>
-  </table>
-  {ticket_html}
+  <h2 style="color:#e50914;margin-top:0;">{heading}</h2>
+  {cards_html}
   <hr style="border:none;border-top:1px solid #333;margin:24px 0 12px;" />
   <p style="font-size:12px;color:#666;">
     Cinemes Illa Carlemany · Notificación automática<br>
@@ -190,10 +223,11 @@ class Notifier:
                 resend.Emails.send({
                     "from": self._email_from,
                     "to": [to_email],
-                    "subject": f"🎬 Nueva película: {title}",
+                    "subject": subject,
                     "html": html_body,
                 })
-                self._logger.info("Email sent to %s for '%s'", to_email, title)
+                titles = ", ".join(m.title for m in movies)
+                self._logger.info("Email sent to %s with %d movies: %s", to_email, len(movies), titles)
                 return True
             except Exception as e:
                 is_last = attempt == max_retries - 1
