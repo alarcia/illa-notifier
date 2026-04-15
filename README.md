@@ -38,7 +38,7 @@ The alerts keyboard has header buttons (Language / Genre) that select or deselec
 
 Don't want to check Telegram? The bot can also send you movie alerts by email. Use `/email` or tap the 📧 button after `/start` to set it up.
 
-- Emails are sent via [Resend](https://resend.com/) from `cine@alarcia.dev`
+- Emails are sent via [Resend](https://resend.com/) from `cine@mail.alarcia.dev`
 - When multiple new movies are detected in the same scraping cycle, they're **batched into a single email** — no inbox spam
 - The email includes posters, genres, languages, and direct ticket links
 - You can disable or remove your email anytime from the bot without losing your Telegram alerts
