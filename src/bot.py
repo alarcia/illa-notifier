@@ -415,6 +415,15 @@ async def email_change_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def unknown_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle any unexpected message or command by showing a failure message and the start menu."""
+    if update.message is None:
+        return
+
+    await update.message.reply_text("❌ No he reconocido el comando o mensaje.")
+    await start_handler(update, context)
+
+
 def build_application(config: BotConfig) -> Application:
     """Build and configure the Telegram Application with all registered handlers."""
     app = Application.builder().token(config.token).build()
@@ -448,6 +457,9 @@ def build_application(config: BotConfig) -> Application:
     app.add_handler(CallbackQueryHandler(email_enable_callback, pattern="^email_enable$"))
     app.add_handler(CallbackQueryHandler(email_remove_callback, pattern="^email_remove$"))
     app.add_handler(CallbackQueryHandler(email_change_callback, pattern="^email_change$"))
+
+    # Fallback for any other message or command
+    app.add_handler(MessageHandler(filters.ALL, unknown_handler))
 
     return app
 

@@ -31,6 +31,7 @@ Set your filters, and you'll get a DM only when something matches. No filters, n
 | `/start` | Registers you and shows a welcome message with quick links to set up alerts and email |
 | `/alerts` | Opens a keyboard with toggle buttons for each language and genre |
 | `/email` | Configure email notifications — add, change, disable, or remove your email |
+| `*` | Any unrecognized message or command automatically shows an error and the main menu |
 
 The alerts keyboard has header buttons (Language / Genre) that select or deselect an entire category at once. Each individual filter shows a ✅ when active.
 
