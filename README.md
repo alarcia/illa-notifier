@@ -22,7 +22,7 @@ Scrapes the [Cinemes Illa Carlemany](https://cinemesilla.com/) website every hou
 
 Set your filters, and you'll get a DM only when something matches. No filters, no messages.
 
-> The bot currently speaks Spanish. English and Catalan localization is planned.
+Check the [roadmap.md](roadmap.md) for planned features and upcoming improvements.
 
 ### Commands
 
@@ -76,6 +76,13 @@ src/
 - Genre and language options are hardcoded. If the cinema adds a new format or genre category, the bot keyboard won't show it until the code is updated.
 - The scraper runs hourly. A movie could be up on the website for up to an hour before the alert goes out.
 - Only tested on macOS and Linux (Docker). No Windows testing.
+
+## 🗺️ Roadmap
+
+- **Multi-language support**: English and Catalan localization for the bot.
+- **Monitoring**: Automated notifications for untracked genres or formats.
+
+Check out the full [roadmap.md](roadmap.md) for more details.
 
 ## 📝 License
 
