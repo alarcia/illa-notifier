@@ -195,8 +195,11 @@ class Database:
     def get_movie_formats(self, movie_id: int) -> list[str]:
         """Return the distinct format names for a movie from its active sessions."""
         with self._get_connection() as conn:
+            # Use sessions regardless of their is_active flag so that we can
+            # compare against the previously-known formats even after
+            # `reset_active_status()` is called at the start of a scrape.
             rows = conn.execute(
-                "SELECT DISTINCT format_name FROM sessions WHERE movie_id = ? AND is_active = 1",
+                "SELECT DISTINCT format_name FROM sessions WHERE movie_id = ?",
                 (movie_id,),
             ).fetchall()
             return [row[0] for row in rows]
@@ -300,6 +303,9 @@ class Database:
         params: list[str | int] = list(formats) + [genre, movie_id]
 
         with self._get_connection() as conn:
+            # Only exclude users who have already been notified via Telegram
+            # for this movie. Users who were emailed (or otherwise notified)
+            # should still receive Telegram DMs if they match the new format.
             rows = conn.execute(f"""
                 SELECT DISTINCT sf.telegram_id
                 FROM subscription_filters sf
@@ -309,7 +315,7 @@ class Database:
                     (sf.filter_type = 'genre' AND sf.filter_value = ?)
                 )
                 AND sf.telegram_id NOT IN (
-                    SELECT nl.telegram_id FROM notification_log nl WHERE nl.movie_id = ?
+                    SELECT nl.telegram_id FROM notification_log nl WHERE nl.movie_id = ? AND nl.channel = 'telegram'
                 )
             """, params).fetchall()
             return [row[0] for row in rows]
