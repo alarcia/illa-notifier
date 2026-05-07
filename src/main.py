@@ -90,7 +90,7 @@ def main():
             formats = sorted({s.get('NombreFormato', 'Unknown') for s in movie_sessions}) or [movie.get('NombreFormato', 'Unknown')]
             format_display = ", ".join(formats)
 
-            # Check if it's new BEFORE updating the DB
+            # Check if it's a completely new movie BEFORE updating the DB
             if db.is_new_movie(movie_id):
                 logger.info("NEW MOVIE DETECTED: %s (%s)", title, format_display)
                 # Send global notification to the channel
@@ -117,6 +117,39 @@ def main():
                     ticket_url=ticket_url,
                 )
                 new_movies.append((movie_data, formats))
+            else:
+                # Existing movie: check whether any NEW formats appeared since
+                # the last scrape. If so, send alerts for those formats so
+                # users subscribed to them receive notifications.
+                existing_formats = db.get_movie_formats(movie_id)
+                new_formats = sorted(set(formats) - set(existing_formats))
+                if new_formats:
+                    new_format_display = ", ".join(new_formats)
+                    logger.info("NEW FORMAT(S) FOR EXISTING MOVIE: %s (%s)", title, new_format_display)
+                    # Send a channel notification about the new format(s)
+                    notifier.send_movie_alert(title, genre, new_format_display, full_poster_url, ticket_url)
+                    new_movies_count += 1
+
+                    # Send personal DMs to subscribers who match the NEW formats
+                    subscribers = db.get_matching_subscribers(movie_id, new_formats, genre)
+                    for tg_id in subscribers:
+                        success = notifier.send_dm(tg_id, title, genre, new_format_display, full_poster_url, ticket_url)
+                        if success:
+                            db.log_notification(tg_id, movie_id)
+                            logger.info("DM sent to subscriber %s", tg_id)
+                        else:
+                            logger.warning("DM failed for subscriber %s", tg_id)
+
+                    # Collect for batched email later (only the new formats)
+                    movie_data = MovieData(
+                        movie_id=movie_id,
+                        title=title,
+                        genre=genre,
+                        format_type=new_format_display,
+                        poster_url=full_poster_url,
+                        ticket_url=ticket_url,
+                    )
+                    new_movies.append((movie_data, new_formats))
             
             # Update or add movie to DB (without format — derived from sessions)
             db.update_or_add_movie(movie_id, title, genre, full_poster_url)
