@@ -13,12 +13,26 @@ from bot import run_bot
 from database import Database, Session
 from notifier import MovieData, Notifier
 
+class TelegramNetworkErrorFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "telegram.ext.Updater" and record.exc_info:
+            exc_type, exc_value, _ = record.exc_info
+            if exc_type and ("NetworkError" in exc_type.__name__ or "ConnectError" in exc_type.__name__):
+                record.exc_info = None
+                record.msg = f"Network issue while polling: {exc_value}"
+                record.args = ()
+                record.levelname = "WARNING"
+                record.levelno = logging.WARNING
+        return True
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext.Updater").addFilter(TelegramNetworkErrorFilter())
 logger = logging.getLogger("illa_notifier.main")
+
 
 def main():
     db = Database()
