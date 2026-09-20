@@ -5,27 +5,9 @@ import os
 import sqlite3
 from dataclasses import dataclass
 
+from models import Session, TelegramUser
+
 logger = logging.getLogger("illa_notifier.database")
-
-
-@dataclass(frozen=True)
-class TelegramUser:
-    telegram_id: int
-    first_name: str
-    username: str | None
-
-
-@dataclass(frozen=True)
-class Session:
-    id: str              # ID_Pase
-    movie_id: int        # ID_Espectaculo
-    format_id: int       # ID_Formato
-    format_name: str     # NombreFormato (CASTELLÀ, VOSE, VO...)
-    room_id: int | None  # ID_Sala
-    room_name: str | None  # NombreSala
-    showtime: str        # HoraReal (full datetime)
-    show_date: str       # diacompleto (30/03/2026)
-    show_time: str       # Hora (19:00)
 
 
 class Database:

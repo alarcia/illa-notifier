@@ -3,6 +3,8 @@ Bot command handlers for the Illa Notifier Telegram bot.
 
 Run alongside the scraping loop; handles direct user interactions.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
