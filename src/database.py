@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import os
 import sqlite3
@@ -29,11 +31,21 @@ class Session:
 class Database:
     def __init__(self, db_path: str = os.environ.get("DB_PATH", "notifier.db")) -> None:
         self.db_path = db_path
+        self._init_db()
         self._create_tables()
         self._run_migrations()
 
-    def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
+    def _init_db(self) -> None:
+        """Initialize database-level PRAGMAs (WAL mode persists in database file)."""
+        with self._get_connection() as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
 
     def _create_tables(self) -> None:
         with self._get_connection() as conn:
