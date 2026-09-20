@@ -60,15 +60,31 @@ The bot and the scraper run in the same process — the bot listens for commands
 - **SQLite** for state (movies, sessions, users, filters, notification log)
 - **Docker** for deployment
 
+## 📚 Documentation
+
+Comprehensive technical documentation is available in the [`docs/`](docs/README.md) directory:
+- 🏛️ [System Overview & Architecture](docs/architecture/system-overview.md)
+- 📂 [Codebase Structure & Boundaries](docs/architecture/codebase-structure.md)
+- 🧵 [Concurrency & Process Model](docs/architecture/concurrency-model.md)
+- 🔄 [Data Pipeline & Ingestion](docs/architecture/data-pipeline.md)
+- 🗄️ [Persistence & Schema Design](docs/architecture/persistence-and-schema.md)
+- 📋 [Architecture Decision Records (ADRs)](docs/decisions/README.md)
+- ⚠️ [Operational Considerations & Scaling](docs/operational-considerations.md)
+
 ## 📂 Project structure
 
 ```
 src/
-├── main.py          # Entry point — scraping loop + bot thread
-├── bot.py           # /start, /alerts, /email, inline keyboard callbacks
-├── notifier.py      # Sends alerts via Telegram (channel + DMs) and email (Resend)
-├── database.py      # All SQLite operations
-└── test_notification.py
+├── main.py            # Entry point — scraping loop + bot thread
+├── bot.py             # /start, /alerts, /email, inline keyboard callbacks
+├── database.py        # SQLite schema, queries, WAL mode, migrations
+├── models.py          # Domain entities & frozen dataclasses
+├── notifier.py        # Telegram (channel + DMs) and Resend email client
+├── scraper.py         # Vue SSR HTML parsing & HTTP retry client
+├── sync_service.py    # Catalog reconciliation & alert dispatch
+├── test_notification.py # Manual Telegram notification test script
+├── test_scraper.py    # Tests for scraper against debug.html fixture
+└── test_sync_service.py # Tests for sync logic, formats, and idempotency
 ```
 
 ## ⚠️ Known limitations
