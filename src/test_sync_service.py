@@ -63,6 +63,121 @@ class TestCatalogSyncService(unittest.TestCase):
         self.assertEqual(second_result.new_formats_count, 0)
         self.assertEqual(len(self.notifier.alerts_sent), 0)
 
+    def test_upsert_session_updates_movie_id_on_conflict(self) -> None:
+        self.db.update_or_add_movie(13422, "LA BOLA NEGRA", "Drama", None)
+        s1 = Session(
+            id="40273", movie_id=13422, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        self.db.upsert_session(s1)
+        self.assertEqual(self.db.get_movie_formats(13422), ["CASTELLÀ"])
+        self.assertEqual(self.db.get_movie_formats(13423), [])
+
+        # Re-upsert same session ID with new movie_id
+        self.db.update_or_add_movie(13423, "LA BOLA NEGRA", "Drama", None)
+        s2 = Session(
+            id="40273", movie_id=13423, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        self.db.upsert_session(s2)
+        self.assertEqual(self.db.get_movie_formats(13423), ["CASTELLÀ"])
+
+    def test_movie_id_change_does_not_duplicate_alerts(self) -> None:
+        from models import BillboardData
+
+        # Pass 1: Movie arrives with ID 13422 and format CASTELLÀ
+        m1 = ScrapedMovie(
+            movie_id=13422, title="LA BOLA NEGRA", genre="Drama",
+            cinema_id="10", cinema_name="Cinemes", poster_url=None,
+            ticket_url="https://example.com/13422"
+        )
+        s1 = Session(
+            id="40273", movie_id=13422, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        b1 = BillboardData(movies=[m1], sessions_by_movie={13422: [s1]})
+        res1 = self.sync_service.sync(b1)
+        self.assertEqual(res1.new_movies_count, 1)
+        self.assertEqual(len(self.notifier.alerts_sent), 1)
+
+        # Pass 2: Cinema changes ID to 13423, reuses session 40273
+        self.notifier.alerts_sent.clear()
+        m2 = ScrapedMovie(
+            movie_id=13423, title="LA BOLA NEGRA", genre="Drama",
+            cinema_id="10", cinema_name="Cinemes", poster_url=None,
+            ticket_url="https://example.com/13423"
+        )
+        s2 = Session(
+            id="40273", movie_id=13423, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        b2 = BillboardData(movies=[m2], sessions_by_movie={13423: [s2]})
+        res2 = self.sync_service.sync(b2)
+        self.assertEqual(res2.new_movies_count, 0)
+        self.assertEqual(res2.new_formats_count, 0)
+        self.assertEqual(len(self.notifier.alerts_sent), 0)
+
+        # Pass 3: Next hour check
+        res3 = self.sync_service.sync(b2)
+        self.assertEqual(res3.new_movies_count, 0)
+        self.assertEqual(res3.new_formats_count, 0)
+        self.assertEqual(len(self.notifier.alerts_sent), 0)
+
+        # Pass 4: Genuine new format arrives (VOSE)
+        s3 = Session(
+            id="40274", movie_id=13423, format_id=2, format_name="VOSE",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 20:00",
+            show_date="25/09/2026", show_time="20:00"
+        )
+        b3 = BillboardData(movies=[m2], sessions_by_movie={13423: [s2, s3]})
+        res4 = self.sync_service.sync(b3)
+        self.assertEqual(res4.new_movies_count, 0)
+        self.assertEqual(res4.new_formats_count, 1)
+        self.assertEqual(len(self.notifier.alerts_sent), 1)
+
+    def test_subscriber_not_spammed_when_movie_id_changes(self) -> None:
+        from models import BillboardData, TelegramUser
+
+        # Register user and subscribe to CASTELLÀ
+        user = TelegramUser(telegram_id=12345, first_name="Test", username="testuser")
+        self.db.upsert_user(user)
+        self.db.set_all_filters(12345, "format_type", ["CASTELLÀ"])
+
+        m1 = ScrapedMovie(
+            movie_id=13422, title="LA BOLA NEGRA", genre="Drama",
+            cinema_id="10", cinema_name="Cinemes", poster_url=None,
+            ticket_url="https://example.com/13422"
+        )
+        s1 = Session(
+            id="40273", movie_id=13422, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        b1 = BillboardData(movies=[m1], sessions_by_movie={13422: [s1]})
+        res1 = self.sync_service.sync(b1)
+        self.assertEqual(res1.dms_sent, 1)
+
+        # Cinema reassigns ID to 13423
+        self.notifier.dms_sent.clear()
+        m2 = ScrapedMovie(
+            movie_id=13423, title="LA BOLA NEGRA", genre="Drama",
+            cinema_id="10", cinema_name="Cinemes", poster_url=None,
+            ticket_url="https://example.com/13423"
+        )
+        s2 = Session(
+            id="40273", movie_id=13423, format_id=1, format_name="CASTELLÀ",
+            room_id=4, room_name="Sala 04", showtime="2026-09-25 17:30",
+            show_date="25/09/2026", show_time="17:30"
+        )
+        b2 = BillboardData(movies=[m2], sessions_by_movie={13423: [s2]})
+        res2 = self.sync_service.sync(b2)
+        self.assertEqual(res2.dms_sent, 0)
+        self.assertEqual(len(self.notifier.dms_sent), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

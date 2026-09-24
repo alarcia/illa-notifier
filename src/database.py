@@ -94,6 +94,19 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_nl_movie
                     ON notification_log (movie_id);
+
+                CREATE TABLE IF NOT EXISTS channel_alerts (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    movie_id    INTEGER,
+                    title       TEXT NOT NULL,
+                    format_name TEXT NOT NULL,
+                    alert_type  TEXT NOT NULL DEFAULT 'new_movie',
+                    sent_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (title, format_name)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ca_title
+                    ON channel_alerts (title);
             """)
 
     def _run_migrations(self) -> None:
@@ -139,17 +152,45 @@ class Database:
                 """)
                 logger.info("Migration: added 'channel' column to notification_log table")
 
+            # Migration: add channel_alerts table if not exists
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS channel_alerts (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    movie_id    INTEGER,
+                    title       TEXT NOT NULL,
+                    format_name TEXT NOT NULL,
+                    alert_type  TEXT NOT NULL DEFAULT 'new_movie',
+                    sent_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (title, format_name)
+                );
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_ca_title
+                    ON channel_alerts (title);
+            """)
+            conn.execute("""
+                INSERT OR IGNORE INTO channel_alerts (movie_id, title, format_name, alert_type)
+                SELECT m.id, m.title, s.format_name, 'migrated'
+                FROM sessions s
+                JOIN movies m ON s.movie_id = m.id;
+            """)
+
     def reset_active_status(self) -> None:
         """Mark all movies and sessions as inactive before a fresh scrape."""
         with self._get_connection() as conn:
             conn.execute("UPDATE movies SET is_active = 0")
             conn.execute("UPDATE sessions SET is_active = 0")
 
-    def is_new_movie(self, movie_id: int) -> bool:
-        """Return True if the movie has never been seen before."""
-        query = "SELECT 1 FROM movies WHERE id = ?"
+    def is_new_movie(self, movie_id: int, title: str | None = None) -> bool:
+        """Return True if the movie has never been seen before (by ID or normalized title)."""
         with self._get_connection() as conn:
-            cursor = conn.execute(query, (movie_id,))
+            if title:
+                row = conn.execute(
+                    "SELECT 1 FROM movies WHERE id = ? OR UPPER(TRIM(title)) = UPPER(TRIM(?))",
+                    (movie_id, title),
+                ).fetchone()
+                return row is None
+            cursor = conn.execute("SELECT 1 FROM movies WHERE id = ?", (movie_id,))
             return cursor.fetchone() is None
 
     def update_or_add_movie(self, movie_id: int, title: str, genre: str, poster_url: str | None) -> None:
@@ -163,6 +204,21 @@ class Database:
                     poster_url = excluded.poster_url
             """, (movie_id, title, genre, poster_url))
 
+            # Migrate previous records if movie re-appeared under a new ID
+            existing = conn.execute(
+                "SELECT id FROM movies WHERE UPPER(TRIM(title)) = UPPER(TRIM(?)) AND id != ?",
+                (title, movie_id),
+            ).fetchall()
+            for (old_id,) in existing:
+                conn.execute(
+                    "UPDATE OR IGNORE sessions SET movie_id = ? WHERE movie_id = ?",
+                    (movie_id, old_id),
+                )
+                conn.execute(
+                    "UPDATE OR IGNORE notification_log SET movie_id = ? WHERE movie_id = ?",
+                    (movie_id, old_id),
+                )
+
     # ── Session methods ──────────────────────────────────────────────────
 
     def upsert_session(self, session: Session) -> None:
@@ -174,6 +230,8 @@ class Database:
                                       show_date, show_time, is_active)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(id) DO UPDATE SET
+                    movie_id    = excluded.movie_id,
+                    format_id   = excluded.format_id,
                     is_active   = 1,
                     format_name = excluded.format_name,
                     room_name   = excluded.room_name,
@@ -186,17 +244,43 @@ class Database:
                 session.showtime, session.show_date, session.show_time,
             ))
 
-    def get_movie_formats(self, movie_id: int) -> list[str]:
-        """Return the distinct format names for a movie from its active sessions."""
+    def get_movie_formats(self, movie_id: int, title: str | None = None) -> list[str]:
+        """Return the distinct format names for a movie from its sessions."""
         with self._get_connection() as conn:
             # Use sessions regardless of their is_active flag so that we can
             # compare against the previously-known formats even after
             # `reset_active_status()` is called at the start of a scrape.
+            if title:
+                rows = conn.execute("""
+                    SELECT DISTINCT s.format_name
+                    FROM sessions s
+                    JOIN movies m ON s.movie_id = m.id
+                    WHERE s.movie_id = ? OR UPPER(TRIM(m.title)) = UPPER(TRIM(?))
+                """, (movie_id, title)).fetchall()
+                if rows:
+                    return [row[0] for row in rows]
             rows = conn.execute(
                 "SELECT DISTINCT format_name FROM sessions WHERE movie_id = ?",
                 (movie_id,),
             ).fetchall()
             return [row[0] for row in rows]
+
+    def has_channel_alert(self, title: str, format_name: str) -> bool:
+        """Return True if a channel alert for this title and format was already sent."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM channel_alerts WHERE UPPER(TRIM(title)) = UPPER(TRIM(?)) AND UPPER(TRIM(format_name)) = UPPER(TRIM(?))",
+                (title, format_name),
+            ).fetchone()
+            return row is not None
+
+    def log_channel_alert(self, movie_id: int, title: str, format_name: str, alert_type: str = "new_movie") -> None:
+        """Record that a public channel alert was sent (idempotency guard)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO channel_alerts (movie_id, title, format_name, alert_type) VALUES (?, ?, ?, ?)",
+                (movie_id, title.strip(), format_name.strip(), alert_type),
+            )
 
     def get_movie_sessions(self, movie_id: int) -> list[Session]:
         """Return all active sessions for a movie (for future bot features)."""
@@ -283,7 +367,7 @@ class Database:
                 (telegram_id, filter_type),
             )
 
-    def get_matching_subscribers(self, movie_id: int, formats: list[str], genre: str) -> list[int]:
+    def get_matching_subscribers(self, movie_id: int, formats: list[str], genre: str, title: str | None = None) -> list[int]:
         """Return telegram_ids of users whose filters match the given movie attributes.
 
         A user matches if they have at least one filter that matches either any of
@@ -294,7 +378,7 @@ class Database:
             return []
 
         placeholders = ", ".join("?" for _ in formats)
-        params: list[str | int] = list(formats) + [genre, movie_id]
+        params: list[str | int] = list(formats) + [genre, movie_id, title or "", title or ""]
 
         with self._get_connection() as conn:
             # Only exclude users who have already been notified via Telegram
@@ -309,7 +393,10 @@ class Database:
                     (sf.filter_type = 'genre' AND sf.filter_value = ?)
                 )
                 AND sf.telegram_id NOT IN (
-                    SELECT nl.telegram_id FROM notification_log nl WHERE nl.movie_id = ? AND nl.channel = 'telegram'
+                    SELECT nl.telegram_id FROM notification_log nl
+                    LEFT JOIN movies m ON nl.movie_id = m.id
+                    WHERE (nl.movie_id = ? OR (? != '' AND UPPER(TRIM(m.title)) = UPPER(TRIM(?))))
+                      AND nl.channel = 'telegram'
                 )
             """, params).fetchall()
             return [row[0] for row in rows]
@@ -360,14 +447,14 @@ class Database:
                 (telegram_id,),
             )
 
-    def get_email_subscribers(self, movie_id: int, formats: list[str], genre: str) -> list[tuple[int, str]]:
+    def get_email_subscribers(self, movie_id: int, formats: list[str], genre: str, title: str | None = None) -> list[tuple[int, str]]:
         """Return (telegram_id, email) of users with email active, matching filters,
         and not yet notified by email for this movie."""
         if not formats:
             return []
 
         placeholders = ", ".join("?" for _ in formats)
-        params: list[str | int] = list(formats) + [genre, movie_id]
+        params: list[str | int] = list(formats) + [genre, movie_id, title or "", title or ""]
 
         with self._get_connection() as conn:
             rows = conn.execute(f"""
@@ -383,7 +470,9 @@ class Database:
                   )
                   AND sf.telegram_id NOT IN (
                       SELECT nl.telegram_id FROM notification_log nl
-                      WHERE nl.movie_id = ? AND nl.channel = 'email'
+                      LEFT JOIN movies m ON nl.movie_id = m.id
+                      WHERE (nl.movie_id = ? OR (? != '' AND UPPER(TRIM(m.title)) = UPPER(TRIM(?))))
+                        AND nl.channel = 'email'
                   )
             """, params).fetchall()
             return [(row[0], row[1]) for row in rows]
