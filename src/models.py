@@ -28,10 +28,10 @@ class ScrapedMovie:
     movie_id: int
     title: str
     genre: str
-    cinema_id: str
-    cinema_name: str
-    poster_url: str | None
-    ticket_url: str
+    cinema_id: str = "illa"
+    cinema_name: str = "Cinemes illa Carlemany"
+    poster_url: str | None = None
+    ticket_url: str = ""
 
 
 @dataclass(frozen=True)

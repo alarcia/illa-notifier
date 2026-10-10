@@ -63,6 +63,26 @@ class TestCatalogSyncService(unittest.TestCase):
         self.assertEqual(second_result.new_formats_count, 0)
         self.assertEqual(len(self.notifier.alerts_sent), 0)
 
+    def test_sync_new_website_astro_billboard(self) -> None:
+        new_html_path = os.path.join(os.path.dirname(__file__), "..", "debug-new.html")
+        if not os.path.exists(new_html_path):
+            self.skipTest("debug-new.html not found")
+
+        with open(new_html_path, "r", encoding="utf-8") as f:
+            billboard = self.scraper.parse_html(f.read())
+
+        self.assertGreater(len(billboard.movies), 0)
+        first_result = self.sync_service.sync(billboard)
+        self.assertEqual(first_result.new_movies_count, len(billboard.movies))
+        self.assertEqual(len(self.notifier.alerts_sent), len(billboard.movies))
+
+        # Idempotency check
+        self.notifier.alerts_sent.clear()
+        second_result = self.sync_service.sync(billboard)
+        self.assertEqual(second_result.new_movies_count, 0)
+        self.assertEqual(second_result.new_formats_count, 0)
+        self.assertEqual(len(self.notifier.alerts_sent), 0)
+
     def test_upsert_session_updates_movie_id_on_conflict(self) -> None:
         self.db.update_or_add_movie(13422, "LA BOLA NEGRA", "Drama", None)
         s1 = Session(

@@ -3,11 +3,21 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 
 from models import Session, TelegramUser
 
 logger = logging.getLogger("illa_notifier.database")
+
+
+def normalize_title(text: str | None) -> str:
+    """Normalize a title string for accent- and case-insensitive comparison."""
+    if not text:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return stripped.upper().strip()
 
 
 class Database:
@@ -21,6 +31,7 @@ class Database:
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.create_function("NORM_TITLE", 1, normalize_title)
         return conn
 
     def _init_db(self) -> None:
@@ -186,7 +197,7 @@ class Database:
         with self._get_connection() as conn:
             if title:
                 row = conn.execute(
-                    "SELECT 1 FROM movies WHERE id = ? OR UPPER(TRIM(title)) = UPPER(TRIM(?))",
+                    "SELECT 1 FROM movies WHERE id = ? OR NORM_TITLE(title) = NORM_TITLE(?)",
                     (movie_id, title),
                 ).fetchone()
                 return row is None
@@ -206,7 +217,7 @@ class Database:
 
             # Migrate previous records if movie re-appeared under a new ID
             existing = conn.execute(
-                "SELECT id FROM movies WHERE UPPER(TRIM(title)) = UPPER(TRIM(?)) AND id != ?",
+                "SELECT id FROM movies WHERE NORM_TITLE(title) = NORM_TITLE(?) AND id != ?",
                 (title, movie_id),
             ).fetchall()
             for (old_id,) in existing:
@@ -255,7 +266,7 @@ class Database:
                     SELECT DISTINCT s.format_name
                     FROM sessions s
                     JOIN movies m ON s.movie_id = m.id
-                    WHERE s.movie_id = ? OR UPPER(TRIM(m.title)) = UPPER(TRIM(?))
+                    WHERE s.movie_id = ? OR NORM_TITLE(m.title) = NORM_TITLE(?)
                 """, (movie_id, title)).fetchall()
                 if rows:
                     return [row[0] for row in rows]
@@ -269,7 +280,7 @@ class Database:
         """Return True if a channel alert for this title and format was already sent."""
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM channel_alerts WHERE UPPER(TRIM(title)) = UPPER(TRIM(?)) AND UPPER(TRIM(format_name)) = UPPER(TRIM(?))",
+                "SELECT 1 FROM channel_alerts WHERE NORM_TITLE(title) = NORM_TITLE(?) AND UPPER(TRIM(format_name)) = UPPER(TRIM(?))",
                 (title, format_name),
             ).fetchone()
             return row is not None
@@ -395,7 +406,7 @@ class Database:
                 AND sf.telegram_id NOT IN (
                     SELECT nl.telegram_id FROM notification_log nl
                     LEFT JOIN movies m ON nl.movie_id = m.id
-                    WHERE (nl.movie_id = ? OR (? != '' AND UPPER(TRIM(m.title)) = UPPER(TRIM(?))))
+                    WHERE (nl.movie_id = ? OR (? != '' AND NORM_TITLE(m.title) = NORM_TITLE(?)))
                       AND nl.channel = 'telegram'
                 )
             """, params).fetchall()
@@ -471,7 +482,7 @@ class Database:
                   AND sf.telegram_id NOT IN (
                       SELECT nl.telegram_id FROM notification_log nl
                       LEFT JOIN movies m ON nl.movie_id = m.id
-                      WHERE (nl.movie_id = ? OR (? != '' AND UPPER(TRIM(m.title)) = UPPER(TRIM(?))))
+                      WHERE (nl.movie_id = ? OR (? != '' AND NORM_TITLE(m.title) = NORM_TITLE(?)))
                         AND nl.channel = 'email'
                   )
             """, params).fetchall()
