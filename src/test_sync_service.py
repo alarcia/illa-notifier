@@ -228,7 +228,7 @@ class TestCatalogSyncService(unittest.TestCase):
             delay = conn.execute(
                 "SELECT CAST(ROUND((julianday(next_attempt_at) - julianday('now')) * 86400) AS INT) FROM telegram_outbox"
             ).fetchone()[0]
-        self.assertEqual(delay, RETRY_DELAYS_SECONDS[0])
+        self.assertAlmostEqual(delay, RETRY_DELAYS_SECONDS[0], delta=1)  # next_attempt_at has 1s precision
 
         # Not due yet -> nothing attempted
         service.process_outbox()
