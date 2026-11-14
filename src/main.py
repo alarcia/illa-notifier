@@ -11,6 +11,7 @@ from scraper import CinemaScraper
 from sync_service import CatalogSyncService
 
 CHECK_INTERVAL_SECONDS = 3600
+OUTBOX_TICK_SECONDS = 60  # finest retry delay
 
 
 class TelegramNetworkErrorFilter(logging.Filter):
@@ -38,6 +39,7 @@ logger = logging.getLogger("illa_notifier.main")
 def run_cycle(scraper: CinemaScraper, sync_service: CatalogSyncService) -> None:
     """Execute a single scraping, sync, and notification pass."""
     try:
+        sync_service.log_undelivered()
         billboard = scraper.get_billboard()
         if not billboard.movies:
             logger.warning("No movies found in billboard data.")
@@ -60,10 +62,18 @@ def main() -> None:
     bot_thread.start()
     logger.info("Background telegram bot thread started.")
 
+    next_scan = time.monotonic()
     while True:
-        run_cycle(scraper, sync_service)
-        logger.info("Waiting %d seconds for next check...", CHECK_INTERVAL_SECONDS)
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        if time.monotonic() >= next_scan:
+            run_cycle(scraper, sync_service)
+            next_scan = time.monotonic() + CHECK_INTERVAL_SECONDS
+            logger.info("Waiting %d seconds for next check...", CHECK_INTERVAL_SECONDS)
+        else:
+            try:
+                sync_service.process_outbox()
+            except Exception:
+                logger.exception("Error processing Telegram outbox")
+        time.sleep(OUTBOX_TICK_SECONDS)
 
 
 if __name__ == "__main__":

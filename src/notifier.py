@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -13,6 +14,13 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+PLACEHOLDER_POSTER = Path(__file__).resolve().parent.parent / "assets" / "placeholder_poster.jpg"
+POSTER_HOSTS = ("cdn.totalsoft.es", "media-illa.totalsoft.es")
+
+
+class NotificationError(Exception):
+    """A Telegram send failed; message is safe to log (no token)."""
 
 
 @dataclass(frozen=True)
@@ -41,28 +49,63 @@ class Notifier:
         else:
             self._logger.warning("RESEND_API_KEY not set — email notifications disabled")
 
-    def _send(self, chat_id, caption: str, poster_url: Optional[str], reply_markup: Optional[dict]) -> bool:
-        """Send photo+caption, falling back to plain text if Telegram rejects the photo (e.g. poster 404)."""
-        base: dict = {"chat_id": chat_id, "parse_mode": "Markdown"}
+    def resolve_poster(self, poster_url: Optional[str]) -> Optional[str]:
+        """Return a poster URL that actually serves an image, or None.
+
+        The site serves posters from two mirrored hosts and swaps between them
+        client-side (img onerror -> data-poster-fallback), so try both.
+        """
+        if not poster_url:
+            return None
+        candidates = [poster_url]
+        for a, b in (POSTER_HOSTS, POSTER_HOSTS[::-1]):
+            if f"//{a}/" in poster_url:
+                candidates.append(poster_url.replace(f"//{a}/", f"//{b}/", 1))
+        for url in candidates:
+            try:
+                r = requests.head(url, timeout=10, allow_redirects=True)
+                if r.ok and r.headers.get("content-type", "").startswith("image/"):
+                    if url != poster_url:
+                        # Evidence for a possible CDN migration (cdn.totalsoft.es vs media-illa)
+                        self._logger.info("Poster served from alternate host: %s (original 404: %s)", url, poster_url)
+                    return url
+            except requests.RequestException:
+                pass
+        self._logger.warning("Poster unavailable on all hosts: %s", poster_url)
+        return None
+
+    def _post(self, method: str, data: dict, files: Optional[dict] = None) -> None:
+        try:
+            response = requests.post(f"{self.api_url}{method}", data=data, files=files, timeout=30)
+        except requests.RequestException as e:
+            # str(e) contains the request URL, which embeds the bot token — never log it
+            raise NotificationError(f"{method}: {type(e).__name__}") from None
+        if not response.ok:
+            raise NotificationError(f"{method}: {response.status_code} {response.text[:300]}")
+
+    def _send(self, chat_id, caption: str, poster_url: Optional[str], reply_markup: Optional[dict], allow_placeholder: bool) -> None:
+        """Send a photo alert. Raises NotificationError on failure.
+
+        Uses the real poster when reachable. The placeholder is used when the movie has no
+        poster, or when allow_placeholder is set (i.e. a previous attempt already failed).
+        """
+        base: dict = {"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"}
         if reply_markup:
             base["reply_markup"] = json.dumps(reply_markup)
 
-        attempts = []
-        if poster_url:
-            attempts.append(("sendPhoto", {**base, "photo": poster_url, "caption": caption}))
-        attempts.append(("sendMessage", {**base, "text": caption}))
-
-        for method, payload in attempts:
+        photo_url = self.resolve_poster(poster_url)
+        if photo_url:
             try:
-                response = requests.post(f"{self.api_url}{method}", data=payload, timeout=20)
-            except requests.RequestException as e:
-                # Exception text includes the URL (and bot token) — log only the type
-                self._logger.error("Telegram %s to %s failed: %s", method, chat_id, type(e).__name__)
-                continue
-            if response.ok:
-                return True
-            self._logger.error("Telegram %s to %s failed: %s %s", method, chat_id, response.status_code, response.text[:300])
-        return False
+                return self._post("sendPhoto", {**base, "photo": photo_url})
+            except NotificationError as e:
+                if not allow_placeholder:
+                    raise
+                self._logger.warning("Real poster rejected for %s, using placeholder: %s", chat_id, e)
+        elif poster_url and not allow_placeholder:
+            raise NotificationError(f"poster unavailable: {poster_url}")
+
+        with open(PLACEHOLDER_POSTER, "rb") as f:
+            self._post("sendPhoto", base, files={"photo": f})
 
     def send_movie_alert(
         self,
@@ -71,7 +114,8 @@ class Notifier:
         format_type: str,
         poster_url: Optional[str],
         ticket_url: Optional[str] = None,
-    ) -> bool:
+        allow_placeholder: bool = False,
+    ) -> None:
         caption = (
             f"🎬 *NEW MOVIE DETECTED*\n\n"
             f"🍿 *Title:* {title}\n"
@@ -87,7 +131,7 @@ class Notifier:
                 ]
             }
         
-        return self._send(self.chat_id, caption, poster_url, reply_markup)
+        self._send(self.chat_id, caption, poster_url, reply_markup, allow_placeholder)
 
     def send_dm(
         self,
@@ -97,8 +141,9 @@ class Notifier:
         format_type: str,
         poster_url: Optional[str],
         ticket_url: Optional[str] = None,
-    ) -> bool:
-        """Send a personal movie alert to a specific user via DM."""
+        allow_placeholder: bool = False,
+    ) -> None:
+        """Send a personal movie alert to a specific user via DM. Raises NotificationError."""
         caption = (
             f"🔔 *Nueva película que encaja con tus alertas*\n\n"
             f"🍿 *Título:* {title}\n"
@@ -114,7 +159,7 @@ class Notifier:
                 ]
             }
 
-        return self._send(telegram_id, caption, poster_url, reply_markup)
+        self._send(telegram_id, caption, poster_url, reply_markup, allow_placeholder)
 
     # ── Email ────────────────────────────────────────────────────────────
 

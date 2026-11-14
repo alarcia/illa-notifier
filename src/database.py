@@ -118,6 +118,29 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_ca_title
                     ON channel_alerts (title);
+
+                -- Telegram deliveries (channel + DMs) with retry schedule.
+                -- status: pending -> sent | failed (retries exhausted)
+                CREATE TABLE IF NOT EXISTS telegram_outbox (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind            TEXT    NOT NULL,          -- 'channel' | 'dm'
+                    chat_id         TEXT    NOT NULL,
+                    movie_id        INTEGER NOT NULL,
+                    title           TEXT    NOT NULL,
+                    genre           TEXT,
+                    format_display  TEXT    NOT NULL,
+                    poster_url      TEXT,
+                    ticket_url      TEXT,
+                    status          TEXT    NOT NULL DEFAULT 'pending',
+                    attempts        INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_error      TEXT,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    sent_at         DATETIME
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_outbox_status
+                    ON telegram_outbox (status, next_attempt_at);
             """)
 
     def _run_migrations(self) -> None:
@@ -495,3 +518,49 @@ class Database:
                 "INSERT OR IGNORE INTO notification_log (telegram_id, movie_id, channel) VALUES (?, ?, 'email')",
                 (telegram_id, movie_id),
             )
+
+    # ── Telegram outbox ──────────────────────────────────────────────────
+
+    def enqueue_telegram(self, kind: str, chat_id: int | str, movie_id: int, title: str, genre: str,
+                         format_display: str, poster_url: str | None, ticket_url: str | None) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO telegram_outbox
+                   (kind, chat_id, movie_id, title, genre, format_display, poster_url, ticket_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (kind, str(chat_id), movie_id, title, genre, format_display, poster_url, ticket_url),
+            )
+
+    def get_due_outbox(self) -> list[sqlite3.Row]:
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return conn.execute(
+                "SELECT * FROM telegram_outbox WHERE status = 'pending' AND next_attempt_at <= CURRENT_TIMESTAMP ORDER BY id"
+            ).fetchall()
+
+    def mark_outbox_sent(self, outbox_id: int) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE telegram_outbox SET status = 'sent', attempts = attempts + 1, sent_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (outbox_id,),
+            )
+
+    def mark_outbox_failed_attempt(self, outbox_id: int, error: str, retry_in_seconds: int | None) -> None:
+        """Record a failed attempt; schedule the next one, or mark 'failed' when retry_in_seconds is None."""
+        with self._get_connection() as conn:
+            if retry_in_seconds is None:
+                conn.execute(
+                    "UPDATE telegram_outbox SET status = 'failed', attempts = attempts + 1, last_error = ? WHERE id = ?",
+                    (error, outbox_id),
+                )
+            else:
+                conn.execute(
+                    """UPDATE telegram_outbox SET attempts = attempts + 1, last_error = ?,
+                       next_attempt_at = datetime('now', ?) WHERE id = ?""",
+                    (error, f"+{retry_in_seconds} seconds", outbox_id),
+                )
+
+    def get_failed_outbox(self) -> list[sqlite3.Row]:
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return conn.execute("SELECT * FROM telegram_outbox WHERE status = 'failed' ORDER BY id").fetchall()

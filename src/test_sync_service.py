@@ -6,22 +6,38 @@ import unittest
 from database import Database
 from models import ScrapedMovie, Session
 from scraper import CinemaScraper
-from sync_service import CatalogSyncService
+from notifier import NotificationError
+from sync_service import RETRY_DELAYS_SECONDS, CatalogSyncService
 
 
 class DummyNotifier:
+    chat_id = "-100"
+
     def __init__(self) -> None:
         self.alerts_sent: list[str] = []
         self.dms_sent: list[tuple[int, str]] = []
         self.emails_sent: list[str] = []
 
-    def send_movie_alert(self, title: str, genre: str, format_type: str, poster_url: str | None, ticket_url: str | None = None) -> bool:
-        self.alerts_sent.append(title)
-        return True
+    def resolve_poster(self, poster_url: str | None) -> str | None:
+        return poster_url
 
-    def send_dm(self, telegram_id: int, title: str, genre: str, format_type: str, poster_url: str | None, ticket_url: str | None = None) -> bool:
+    def send_movie_alert(self, title: str, genre: str, format_type: str, poster_url: str | None, ticket_url: str | None = None, allow_placeholder: bool = False) -> None:
+        self.alerts_sent.append(title)
+
+    def send_dm(self, telegram_id: int, title: str, genre: str, format_type: str, poster_url: str | None, ticket_url: str | None = None, allow_placeholder: bool = False) -> None:
         self.dms_sent.append((telegram_id, title))
-        return True
+
+
+class FailingNotifier(DummyNotifier):
+    """Telegram down: every send fails. Records allow_placeholder per attempt."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.placeholder_flags: list[bool] = []
+
+    def send_movie_alert(self, *args, allow_placeholder: bool = False) -> None:
+        self.placeholder_flags.append(allow_placeholder)
+        raise NotificationError("sendPhoto: 502 Bad Gateway")
 
     def send_email_notification(self, to_email: str, movies: list) -> bool:
         self.emails_sent.append(to_email)
@@ -197,6 +213,41 @@ class TestCatalogSyncService(unittest.TestCase):
         res2 = self.sync_service.sync(b2)
         self.assertEqual(res2.dms_sent, 0)
         self.assertEqual(len(self.notifier.dms_sent), 0)
+
+    def test_failed_channel_alert_is_retried_on_schedule_then_marked_failed(self) -> None:
+        from models import BillboardData
+
+        notifier = FailingNotifier()
+        service = CatalogSyncService(db=self.db, notifier=notifier)
+        m = ScrapedMovie(movie_id=1, title="SCROOGE", genre="Comèdia", poster_url="https://x/p.jpg", ticket_url="t")
+        s = Session(id="a", movie_id=1, format_id=2, format_name="VOSE", room_id=6, room_name="Sala 06",
+                    showtime="2026-11-14T19:00:00", show_date="14/11/2026", show_time="19:00")
+        service.sync(BillboardData(movies=[m], sessions_by_movie={1: [s]}))
+
+        with self.db._get_connection() as conn:
+            delay = conn.execute(
+                "SELECT CAST(ROUND((julianday(next_attempt_at) - julianday('now')) * 86400) AS INT) FROM telegram_outbox"
+            ).fetchone()[0]
+        self.assertEqual(delay, RETRY_DELAYS_SECONDS[0])
+
+        # Not due yet -> nothing attempted
+        service.process_outbox()
+        self.assertEqual(len(notifier.placeholder_flags), 1)
+
+        for _ in RETRY_DELAYS_SECONDS:
+            with self.db._get_connection() as conn:
+                conn.execute("UPDATE telegram_outbox SET next_attempt_at = CURRENT_TIMESTAMP")
+            service.process_outbox()
+
+        self.assertEqual(notifier.placeholder_flags, [False, True, True, True, True])
+        failed = self.db.get_failed_outbox()
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["attempts"], 5)
+        self.assertIn("502", failed[0]["last_error"])
+        # Still deduped: re-sync must not enqueue a second alert
+        service.sync(BillboardData(movies=[m], sessions_by_movie={1: [s]}))
+        with self.db._get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0], 1)
 
 
 if __name__ == "__main__":
