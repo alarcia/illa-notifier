@@ -144,7 +144,8 @@ class CinemaScraper:
                     et_lower = et.lower()
                     if "sala" in et_lower:
                         room_tag = et
-                    elif et_lower in ("original", "vo", "vose"):
+                    # Site renders "V.O.S.E." / "V.O." — strip punctuation before matching
+                    elif re.sub(r"[.\s]", "", et_lower) in ("original", "vo", "vos", "vose"):
                         lang_tag = "VOSE"
                     elif "cat" in et_lower:
                         lang_tag = "CATALÀ"
@@ -200,10 +201,9 @@ class CinemaScraper:
                         format_name = "CATALÀ"
                     elif in_lang == "es":
                         format_name = "CASTELLÀ"
-                    elif any(o in genre.lower() for o in ("òpera", "opera", "ballet", "concert")):
-                        format_name = "VOSE"
                     else:
-                        format_name = "CASTELLÀ"
+                        # Site omits inLanguage only for original-version sessions (VOSE films, opera, ballet)
+                        format_name = "VOSE"
 
                 format_id = FORMAT_ID_MAP.get(format_name, 1)
 

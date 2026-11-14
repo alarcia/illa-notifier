@@ -41,6 +41,29 @@ class Notifier:
         else:
             self._logger.warning("RESEND_API_KEY not set — email notifications disabled")
 
+    def _send(self, chat_id, caption: str, poster_url: Optional[str], reply_markup: Optional[dict]) -> bool:
+        """Send photo+caption, falling back to plain text if Telegram rejects the photo (e.g. poster 404)."""
+        base: dict = {"chat_id": chat_id, "parse_mode": "Markdown"}
+        if reply_markup:
+            base["reply_markup"] = json.dumps(reply_markup)
+
+        attempts = []
+        if poster_url:
+            attempts.append(("sendPhoto", {**base, "photo": poster_url, "caption": caption}))
+        attempts.append(("sendMessage", {**base, "text": caption}))
+
+        for method, payload in attempts:
+            try:
+                response = requests.post(f"{self.api_url}{method}", data=payload, timeout=20)
+            except requests.RequestException as e:
+                # Exception text includes the URL (and bot token) — log only the type
+                self._logger.error("Telegram %s to %s failed: %s", method, chat_id, type(e).__name__)
+                continue
+            if response.ok:
+                return True
+            self._logger.error("Telegram %s to %s failed: %s %s", method, chat_id, response.status_code, response.text[:300])
+        return False
+
     def send_movie_alert(
         self,
         title: str,
@@ -64,33 +87,7 @@ class Notifier:
                 ]
             }
         
-        # If we have a poster URL, we send a photo. Otherwise, just text.
-        if poster_url:
-            endpoint = f"{self.api_url}sendPhoto"
-            payload = {
-                "chat_id": self.chat_id,
-                "photo": poster_url,
-                "caption": caption,
-                "parse_mode": "Markdown",
-            }
-        else:
-            endpoint = f"{self.api_url}sendMessage"
-            payload = {
-                "chat_id": self.chat_id,
-                "text": caption,
-                "parse_mode": "Markdown",
-            }
-
-        if reply_markup:
-            payload["reply_markup"] = json.dumps(reply_markup)
-
-        try:
-            response = requests.post(endpoint, data=payload)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            self._logger.error("Error sending Telegram notification: %s", e)
-            return False
+        return self._send(self.chat_id, caption, poster_url, reply_markup)
 
     def send_dm(
         self,
@@ -117,32 +114,7 @@ class Notifier:
                 ]
             }
 
-        if poster_url:
-            endpoint = f"{self.api_url}sendPhoto"
-            payload: dict = {
-                "chat_id": telegram_id,
-                "photo": poster_url,
-                "caption": caption,
-                "parse_mode": "Markdown",
-            }
-        else:
-            endpoint = f"{self.api_url}sendMessage"
-            payload = {
-                "chat_id": telegram_id,
-                "text": caption,
-                "parse_mode": "Markdown",
-            }
-
-        if reply_markup:
-            payload["reply_markup"] = json.dumps(reply_markup)
-
-        try:
-            response = requests.post(endpoint, data=payload)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            self._logger.error("Error sending DM to %s: %s", telegram_id, e)
-            return False
+        return self._send(telegram_id, caption, poster_url, reply_markup)
 
     # ── Email ────────────────────────────────────────────────────────────
 

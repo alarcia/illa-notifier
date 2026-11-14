@@ -57,6 +57,24 @@ class TestCinemaScraper(unittest.TestCase):
         self.assertTrue(len(first_session.show_date) > 0)
         self.assertTrue(len(first_session.show_time) > 0)
 
+    def test_vose_detected_from_dotted_tag_and_missing_in_language(self) -> None:
+        # Regression: Scrooge VOSE sessions are tagged "V.O.S.E." and have no inLanguage
+        html_text = """<html><body>
+<script type="application/ld+json">{"@type":"ItemList","itemListElement":[{"item":{
+  "name":"Scrooge","url":"https://cinemesilla.com/pelicula/scrooge","genre":["Comèdia"],
+  "subjectOf":[
+    {"url":"https://cinemesilla.com/sesion/a","startDate":"2026-11-14T16:30:00","inLanguage":"es"},
+    {"url":"https://cinemesilla.com/sesion/b","startDate":"2026-11-14T19:00:00"},
+    {"url":"https://cinemesilla.com/sesion/c","startDate":"2026-11-15T19:00:00"}
+  ]}}]}</script>
+<section id="cartelera">
+  <a href="/sesion/a"><span class="etiqueta sala">Sala 01</span></a>
+  <a href="/sesion/b"><span class="etiqueta">V.O.S.E.</span><span class="etiqueta sala">Sala 06</span></a>
+</section></body></html>"""
+        billboard = self.scraper.parse_html(html_text)
+        formats = {s.id: s.format_name for s in billboard.sessions_by_movie[billboard.movies[0].movie_id]}
+        self.assertEqual(formats, {"a": "CASTELLÀ", "b": "VOSE", "c": "VOSE"})
+
     def test_parse_legacy_html_fallback(self) -> None:
         if not os.path.exists(self.legacy_html_path):
             self.skipTest("debug.html not found in project root")
